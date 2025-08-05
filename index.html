@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brand Image Search Tool</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .completed {
+            text-decoration: line-through;
+            color: #9ca3af; /* Tailwind's gray-400 */
+        }
+        /* Style for the progress bar on the accordion button */
+        .progress-bar-bg {
+            background-color: #e5e7eb; /* gray-200 */
+            transition: background 0.4s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+
+    <div class="container mx-auto p-4 sm:p-6 md:p-8 max-w-4xl">
+
+        <!-- Header Section -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold text-gray-900">Google Sheet Product Image Search</h1>
+            <p class="mt-2 text-lg text-gray-600">Click a brand to see its products. Progress is saved globally.</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="bg-white p-4 sm:p-6 rounded-xl shadow-md border border-gray-200">
+
+            <!-- Loading State -->
+            <div id="loading-state" class="text-center py-10">
+                <p class="text-lg font-medium text-gray-700">Connecting to database and fetching products...</p>
+                <div class="mt-4 w-16 h-16 border-4 border-blue-500 border-dashed rounded-full animate-spin mx-auto"></div>
+            </div>
+
+            <!-- Error Message Display -->
+            <div id="error-message" class="hidden text-center py-10 bg-red-50 text-red-700 rounded-lg">
+                <h3 class="font-bold text-xl">An Error Occurred</h3>
+                <p id="error-text" class="mt-2"></p>
+            </div>
+
+            <!-- Accordion Container -->
+            <div id="accordion-container" class="hidden">
+                 <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                     <h3 class="font-bold text-lg text-blue-800">Instructions</h3>
+                     <ul class="list-disc list-inside text-blue-700 mt-2 space-y-1">
+                         <li>Click the checkmark (✓) to mark a product as "done". Your progress is saved for everyone in real-time.</li>
+                         <li>The progress bar on each brand shows the completion percentage.</li>
+                         <li>Click an individual product name to open one image search tab.</li>
+                         <li>Use the "Open All Product Images" button to open a search for all products in that brand at once.</li>
+                     </ul>
+                     <p class="text-sm text-yellow-700 bg-yellow-100 p-2 rounded-md mt-3"><strong>Important:</strong> Your browser might block multiple tabs. If it does, please "Allow pop-ups" for this page.</p>
+                 </div>
+                <div id="brand-accordions" class="space-y-3">
+                    <!-- Accordions will be dynamically inserted here -->
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Firebase Libraries -->
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, doc, setDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- CONFIGURATION ---
+        const googleSheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTemIQAjyMsEqPPUYaNMIn2rwrEbuqR7NrW9vey_mC1iZmIn7FZlOH7g3Co7bZG5B18BJy7Cjldvs53/pub?output=csv';
+        const DB_COLLECTION_NAME = 'completedProducts';
+
+        // =================================================================================
+        // Your Firebase configuration.
+        // =================================================================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyDjl2QFyRWoN_SjbRKTuhxp9ksgm-5MBTw",
+            authDomain: "comogluimg.firebaseapp.com",
+            projectId: "comogluimg",
+            storageBucket: "comogluimg.appspot.com",
+            messagingSenderId: "964383861519",
+            appId: "1:964383861519:web:447d607e3c158df951ec7a",
+            measurementId: "G-NK80JQBKXE"
+        };
+        // =================================================================================
+
+        // --- DOM ELEMENTS ---
+        const loadingState = document.getElementById('loading-state');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        const accordionContainer = document.getElementById('accordion-container');
+        const brandAccordions = document.getElementById('brand-accordions');
+
+        // --- FIREBASE INITIALIZATION ---
+        let db;
+        try {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+        } catch (e) {
+            console.error("Firebase initialization error:", e);
+            showError("Could not initialize Firebase. Please ensure your firebaseConfig object is correct.");
+        }
+
+        // --- CORE LOGIC ---
+        document.addEventListener('DOMContentLoaded', () => {
+            if (db) {
+                fetchAndProcessData();
+            }
+        });
+
+        function showError(message) {
+            loadingState.classList.add('hidden');
+            errorText.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function parseCSV(csvText) {
+            const sanitizedText = csvText.replace(/\r/g, "");
+            const lines = sanitizedText.trim().split('\n');
+            if (lines.length < 2) return [];
+            // *** FIX WAS APPLIED HERE ***
+            // The headers are the first line of the CSV, so we take lines[0].
+            const headers = lines[0].split(',').map(header => header.trim());
+            const data = [];
+            // Start the loop from i = 1 to skip the header row
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',').map(value => value.trim());
+                if (values.length === headers.length) {
+                    const rowObject = {};
+                    for (let j = 0; j < headers.length; j++) {
+                        rowObject[headers[j]] = values[j];
+                    }
+                    data.push(rowObject);
+                }
+            }
+            return data;
+        }
+
+        async function fetchAndProcessData() {
+            try {
+                const response = await fetch(googleSheetUrl);
+                if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
+
+                const csvText = await response.text();
+                const parsedData = parseCSV(csvText);
+                if (!parsedData || parsedData.length === 0) throw new Error("Failed to parse CSV or the file is empty.");
+
+                const productsByBrand = groupProducts(parsedData);
+
+                const orderedBrands = [];
+                const seenBrands = new Set();
+                parsedData.forEach((row, index) => {
+                    const brand = row.Brand ? row.Brand.trim() : '';
+                    // Stricter check to filter out invalid brand rows
+                    if (!brand || brand.toLowerCase() === 'brand') {
+                         console.warn(`Row ${index + 2} has a missing or invalid brand name. SKIPPING. Data:`, row);
+                        return; // Skip this row entirely
+                    }
+                    if (!seenBrands.has(brand)) {
+                        orderedBrands.push(brand);
+                        seenBrands.add(brand);
+                    }
+                });
+
+                createBrandAccordions(productsByBrand, orderedBrands);
+                listenForUpdates(productsByBrand);
+
+                loadingState.classList.add('hidden');
+                accordionContainer.classList.remove('hidden');
+
+            } catch (error) {
+                console.error('Error fetching or processing data:', error);
+                showError(`Failed to load data from the Google Sheet. Please ensure the link is correct and the sheet is published. Details: ${error.message}`);
+            }
+        }
+
+        function groupProducts(data) {
+            const grouped = {};
+            data.forEach(row => {
+                // Ensure we don't group items under an invalid brand name
+                const brand = row.Brand ? row.Brand.trim() : '';
+                const name = row.Name ? row.Name.trim() : null;
+                if (brand && name && brand.toLowerCase() !== 'brand') {
+                    if (!grouped[brand]) grouped[brand] = [];
+                    grouped[brand].push(name);
+                }
+            });
+            // Clean up any "Unnamed Brand" that might have slipped through
+            delete grouped['Unnamed Brand'];
+            delete grouped[''];
+            return grouped;
+        }
+
+        function openSearchTab(brand, productName) {
+          const fullQuery = `${brand} ${productName} istanbul fiyat price`;
+          const searchQuery = encodeURIComponent(fullQuery);
+          const googleSearchUrl = `https://www.google.com/search?q=${searchQuery}`;
+          window.open(googleSearchUrl, '_blank');
+      }
+
+        function createBrandAccordions(productsByBrand, orderedBrands) {
+            brandAccordions.innerHTML = '';
+            const brands = orderedBrands;
+
+            if (brands.length === 0) {
+                 showError("No valid 'Brand' and 'Name' columns found, or the sheet is empty.");
+                 return;
+            }
+
+            brands.forEach(brand => {
+                const products = productsByBrand[brand] || [];
+                // Don't create an accordion if there are no products for a brand
+                if (products.length === 0) return;
+
+                const accordionItem = document.createElement('div');
+                const brandId = brand.replace(/[^a-zA-Z0-9]/g, '-');
+                accordionItem.className = "border border-gray-200 rounded-lg overflow-hidden";
+
+                const button = document.createElement('button');
+                button.className = "w-full text-left p-4 bg-gray-50 hover:bg-gray-100 focus:outline-none transition-colors duration-200";
+                button.innerHTML = `
+                    <div id="progress-${brandId}" class="progress-bar-bg rounded-lg -m-4 p-4">
+                        <div class="flex justify-between items-center">
+                            <span class="font-semibold text-lg text-gray-800">${brand}</span>
+                            <div class="flex items-center">
+                                <span id="count-${brandId}" class="text-sm font-medium text-gray-600 mr-3">0 / ${products.length}</span>
+                                <svg class="w-6 h-6 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const content = document.createElement('div');
+                content.className = "accordion-content bg-white";
+
+                const contentWrapper = document.createElement('div');
+                contentWrapper.className = 'p-4 border-t border-gray-200';
+
+                // --- "OPEN ALL" BUTTON ---
+                const openAllButton = document.createElement('button');
+                openAllButton.textContent = 'Open All Product Images';
+                openAllButton.className = 'w-full mb-4 px-4 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200';
+                openAllButton.onclick = () => {
+                    products.forEach(productName => {
+                        openSearchTab(brand, productName);
+                    });
+                };
+                contentWrapper.appendChild(openAllButton);
+                // --- END OF BUTTON ---
+
+                const productList = document.createElement('ul');
+                productList.className = 'space-y-2';
+
+                products.forEach(productName => {
+                    const uniqueId = `${brand}|${productName}`;
+                    const elementId = uniqueId.replace(/[^a-zA-Z0-9]/g, '-');
+                    const li = document.createElement('li');
+                    li.className = 'flex items-center justify-between p-2 rounded-md hover:bg-gray-100';
+                    li.innerHTML = `
+                        <a href="#" id="link-${elementId}" class="text-blue-600 hover:underline hover:text-blue-800 flex-grow">${productName}</a>
+                        <button id="button-${elementId}" class="ml-4 px-2 py-0.5 border rounded-md text-sm font-bold transition-colors duration-200 bg-gray-200 text-gray-600 border-gray-300">✓</button>
+                    `;
+
+                    li.querySelector(`#link-${elementId}`).onclick = (e) => { e.preventDefault(); openSearchTab(brand, productName); };
+                    li.querySelector(`#button-${elementId}`).onclick = async () => {
+                        const itemRef = doc(db, DB_COLLECTION_NAME, uniqueId);
+                        const isCompleted = li.querySelector('a').classList.contains('completed');
+                        if (isCompleted) {
+                            await deleteDoc(itemRef);
+                        } else {
+                            await setDoc(itemRef, { brand: brand, completedAt: new Date() });
+                        }
+                    };
+                    productList.appendChild(li);
+                });
+
+                contentWrapper.appendChild(productList);
+                content.appendChild(contentWrapper);
+                accordionItem.appendChild(button);
+                accordionItem.appendChild(content);
+                brandAccordions.appendChild(accordionItem);
+
+                button.addEventListener('click', () => {
+                    button.querySelector('svg').classList.toggle('rotate-180');
+                    if (content.style.maxHeight) {
+                        content.style.maxHeight = null;
+                    } else {
+                        content.style.maxHeight = content.scrollHeight + "px";
+                    }
+                });
+            });
+        }
+
+        function listenForUpdates(productsByBrand) {
+            const completedItemsRef = collection(db, DB_COLLECTION_NAME);
+            onSnapshot(completedItemsRef, (snapshot) => {
+                const completedCountByBrand = {};
+
+                for (const brand in productsByBrand) {
+                    completedCountByBrand[brand] = 0;
+                    productsByBrand[brand].forEach(productName => {
+                        const uniqueId = `${brand}|${productName}`;
+                        const elementId = uniqueId.replace(/[^a-zA-Z0-9]/g, '-');
+                        const link = document.getElementById(`link-${elementId}`);
+                        const button = document.getElementById(`button-${elementId}`);
+                        if (link && button) {
+                            link.classList.remove('completed');
+                            button.className = 'ml-4 px-2 py-0.5 border rounded-md text-sm font-bold transition-colors duration-200 bg-gray-200 text-gray-600 border-gray-300';
+                        }
+                    });
+                }
+
+                snapshot.docs.forEach(doc => {
+                    const brand = doc.data().brand;
+                    if (brand && completedCountByBrand.hasOwnProperty(brand)) {
+                        completedCountByBrand[brand]++;
+                    }
+                    const uniqueId = doc.id;
+                    const elementId = uniqueId.replace(/[^a-zA-Z0-9]/g, '-');
+                    const link = document.getElementById(`link-${elementId}`);
+                    const button = document.getElementById(`button-${elementId}`);
+                    if (link && button) {
+                        link.classList.add('completed');
+                        button.className = 'ml-4 px-2 py-0.5 border rounded-md text-sm font-bold transition-colors duration-200 bg-green-500 text-white border-green-500';
+                    }
+                });
+
+                for (const brand in productsByBrand) {
+                    const brandId = brand.replace(/[^a-zA-Z0-9]/g, '-');
+                    const total = productsByBrand[brand].length;
+                    const completed = completedCountByBrand[brand];
+                    const percentage = total > 0 ? (completed / total) * 100 : 0;
+
+                    const countEl = document.getElementById(`count-${brandId}`);
+                    const progressEl = document.getElementById(`progress-${brandId}`);
+
+                    if (countEl) {
+                        countEl.textContent = `${completed} / ${total}`;
+                    }
+                    if (progressEl) {
+                        progressEl.style.background = `linear-gradient(to right, #4ade80 ${percentage}%, #e5e7eb ${percentage}%)`; // green-400 to gray-200
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
