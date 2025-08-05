@@ -206,7 +206,7 @@
         }
 
         function openSearchTab(brand, productName) {
-          const fullQuery = `${brand} ${productName} istanbul fiyat price`;
+          const fullQuery = `${brand} ${productName} fiyat`;
           const searchQuery = encodeURIComponent(fullQuery);
           const googleSearchUrl = `https://www.google.com/search?q=${searchQuery}`;
           window.open(googleSearchUrl, '_blank');
